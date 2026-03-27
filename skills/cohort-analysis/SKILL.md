@@ -62,6 +62,25 @@ For each selected file/sheet (or the query results for DB sources), read the fir
 - **GP** (optional) — look for: GP ($), gross_profit, GP
 - **Plan/Segment** (optional) — look for: Plan, plan, segment, tier
 
+### Gross Profit (GP) Resolution
+
+The CAC/LTV payback analysis requires gross profit data. There are three ways to get it — check in this order:
+
+1. **Explicit GP column** — If the revenue data has a GP or gross_profit column, map it directly (`"gp": "column_name"`). This is the most accurate option.
+
+2. **Per-row margin %** — If the revenue data has a margin percentage column, map it (`"margin_pct": "column_name"`). GP is calculated as `revenue * margin_pct` per row.
+
+3. **Inputs sheet margin (automatic fallback)** — If the revenue data has **neither** a GP column nor a margin % column, but the Inputs sheet has gross margin percentages by month, the tool will **automatically apply** those margins to compute GP. No extra mapping needed — just make sure the Inputs sheet is configured.
+
+If none of these are available, ask the user:
+
+> "The CAC/LTV analysis needs gross profit data. Do you know your approximate gross margin? For example, 'around 70%' or 'it varies — 65% in 2024 and 72% in 2025.' I can apply that to your revenue to estimate GP."
+
+Then either:
+- Add margin values to the Inputs sheet (if using Excel)
+- Add a `margin_pct` column to the revenue data
+- Ask the user for a flat margin estimate and add it to the Inputs config
+
 ### For Marketing Spend (Inputs):
 - Read the Inputs sheet. Expect row structure: dates in first row, S&M spend in second row, margin % in third row.
 - If the file has a different format, ask the user to explain the layout.

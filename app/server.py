@@ -8,6 +8,7 @@ from pathlib import Path
 
 from contextlib import asynccontextmanager
 
+import pandas as pd
 import uvicorn
 from fastapi import FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse
@@ -43,6 +44,25 @@ _cache = {
 }
 
 
+def _apply_inputs_margin(cache: dict):
+    """If revenue data has no GP/margin_pct columns, apply gross margin from Inputs sheet."""
+    gross_margin = cache.get("inputs", {}).get("gross_margin", {})
+    if not gross_margin:
+        return
+    for key in ("revenue_df", "revenue_cash_df"):
+        df = cache.get(key)
+        if df is None or "gp" in df.columns or "margin_pct" in df.columns:
+            continue
+        if "revenue" not in df.columns or "action_month" not in df.columns:
+            continue
+        df = df.copy()
+        df["margin_pct"] = df["action_month"].apply(
+            lambda d: gross_margin.get(d.strftime("%Y-%m-01") if hasattr(d, "strftime") else str(d), 0)
+        )
+        df["gp"] = df["revenue"] * df["margin_pct"]
+        cache[key] = df
+
+
 def _load_data(profile: str = None):
     """Load all data based on config profile."""
     config = load_config(profile)
@@ -71,6 +91,9 @@ def _load_data(profile: str = None):
         _cache["inputs"] = load_inputs(config)
     except Exception as e:
         print(f"Warning: Could not load inputs: {e}")
+
+    # Apply inputs gross margin to revenue data if GP is missing
+    _apply_inputs_margin(_cache)
 
     profile_name = config.get("_profile", "default")
     print(f"Data loaded (profile: {profile_name}).")

@@ -23,6 +23,16 @@ Built by [Fergana Labs](https://ferganalabs.com).
 
 Claude Code will walk you through connecting your data and launch the dashboard.
 
+## Tips
+
+- **Something not working?** Just tell Claude Code what's wrong — it can debug and fix issues on the fly.
+- **Want a different view or chart?** Ask Claude Code to add, modify, or rearrange dashboard views to fit your needs.
+- **Data not mapping correctly?** Describe your columns and Claude Code will re-map them.
+- **Need help interpreting results?** Ask Claude Code to explain what the charts mean for your business.
+- **Want to connect a different data source?** Just run `/cohort-analysis` again with a new file or database.
+
+Claude Code has full context on how this plugin works — if you get stuck at any point, just ask it.
+
 ## Quick Start (without plugin)
 
 If you prefer to clone and run directly:
@@ -108,3 +118,113 @@ Both engagement and revenue retention charts support two counting methods:
 - **Future** — was the user active in that period or any later period?
 
 Toggle between them directly on the retention charts.
+
+## Technical Details
+
+### Architecture
+
+The plugin is a three-tier system: a React frontend, a FastAPI backend, and a Python data processing pipeline.
+
+```
+bling_cohorts/
+├── app/
+│   ├── server.py            # FastAPI server & API routes
+│   ├── cohort_engine.py     # Core analytics computation
+│   ├── data_processor.py    # Data loading & normalization
+│   └── static/
+│       └── index.html       # Self-contained React SPA
+├── data/
+│   ├── config.json          # Default config
+│   └── configs/             # Named profile configs
+├── skills/
+│   └── cohort-analysis/
+│       └── SKILL.md         # Claude Code skill definition
+├── .claude-plugin/
+│   └── plugin.json          # Plugin metadata
+├── .claude/
+│   └── settings.local.json  # Claude Code permissions
+└── requirements.txt         # Python dependencies
+```
+
+### How It Works
+
+1. **Skill invocation** — When you run `/cohort-analysis`, Claude Code follows the interactive guide in `skills/cohort-analysis/SKILL.md`. It walks through data source detection, column mapping, accrual vs cash recognition, cohort date calculation, and profile naming.
+
+2. **Config generation** — A JSON config is written to `data/configs/{profile}.json` mapping your source columns to the internal schema (`customer_id`, `action_month`, `revenue`, `gp`, etc.).
+
+3. **Data loading** — On server startup, `data_processor.py` loads your data (CSV, Excel, or PostgreSQL), parses dates (including Excel serial numbers), buckets them to month or week, and calculates cohort dates as each customer's first appearance.
+
+4. **Computation** — `cohort_engine.py` computes all metrics in-memory from normalized DataFrames: retention rates, revenue/GP layer cakes, CAC payback milestones, dollar retention, customer concentration, and more.
+
+5. **API serving** — `server.py` exposes endpoints like `/api/engagement`, `/api/revenue`, `/api/cac`, `/api/retention`, etc. Results are cached in memory after initial load; profile switches trigger a reload via `/api/reload`.
+
+6. **Frontend rendering** — `index.html` is a single-file React app (no build step) using Recharts for charts and Tailwind for styling, all loaded via CDN. It fetches from the API endpoints and renders interactive charts with hover highlighting, legend toggling, and cohort filtering.
+
+### API Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/api/config` | Current config |
+| `/api/profiles` | List available profiles |
+| `/api/reload` | Switch profile & reload data |
+| `/api/engagement` | Engagement cohort analysis |
+| `/api/revenue` | Revenue & GP cohorts |
+| `/api/cac` | CAC/LTV payback analysis |
+| `/api/retention` | Retention rates (standard & future) |
+| `/api/layer-cake` | Cumulative GP vs CAC payback |
+| `/api/dollar-retention` | Net revenue retention |
+| `/api/customers` | Customer concentration (Pareto) |
+| `/api/active-customers` | New vs returning active users |
+
+All endpoints accept query parameters for filtering: `period` (month/week), `include_current`, `start`, `end`, `mode` (standard/future), `basis` (accrual/cash).
+
+### Config Schema
+
+```json
+{
+  "period": "month",
+  "engagement": {
+    "source_type": "file",
+    "filepath": "data.xlsx",
+    "sheet": "Engagement",
+    "calculate_cohort": true,
+    "column_map": {
+      "customer_id": "User ID",
+      "action_month": "Event Date",
+      "event_type": "Event",
+      "event_count": "Count"
+    }
+  },
+  "revenue": {
+    "source_type": "file",
+    "filepath": "data.xlsx",
+    "sheet": "Accrual",
+    "cash_sheet": "Cash",
+    "calculate_cohort": true,
+    "column_map": {
+      "customer_id": "Customer ID",
+      "action_month": "Date",
+      "revenue": "Amount",
+      "gp": "Gross Profit"
+    }
+  },
+  "inputs": {
+    "filepath": "data.xlsx",
+    "sheet": "Inputs"
+  }
+}
+```
+
+For PostgreSQL, replace `filepath`/`sheet` with `connection_string` and `query`.
+
+### Dependencies
+
+**Python:** FastAPI, Uvicorn, Pandas, openpyxl, psycopg2-binary
+
+**Frontend (CDN):** React 18, Recharts, Tailwind CSS, Babel
+
+### Extending
+
+- **New endpoint:** Add a compute function in `cohort_engine.py`, wire it in `server.py`, add a React component in `index.html`.
+- **New data source:** Implement a reader in `data_processor.py` that returns a normalized DataFrame with the required columns.
+- **Styling:** Modify the `COHORT_COLORS` array or Tailwind classes in `index.html`.
