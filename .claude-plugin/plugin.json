@@ -1,0 +1,9 @@
+{
+  "name": "cohort-analysis",
+  "description": "Interactive cohort analysis dashboard — engagement retention, revenue/GP cohorts, CAC/LTV payback. Point at CSV, Excel, or a database and get live charts.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Fergana Labs",
+    "url": "https://ferganalabs.com"
+  }
+}

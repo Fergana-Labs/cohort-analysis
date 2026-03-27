@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
+.claude-delegate-token
+
+# Data files (user-specific, not committed)
+*.xlsx
+*.csv
+data/configs/*.json
+!data/configs/.gitkeep

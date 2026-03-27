@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cohort Analysis</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script crossorigin src="https://unpkg.com/@babel/standalone@7.26.10/babel.min.js"></script>
+  <script>
+    // Debug: check library loading
+    window.addEventListener('DOMContentLoaded', () => {
+      const libs = { React: !!window.React, ReactDOM: !!window.ReactDOM, Recharts: !!window.Recharts, Babel: !!window.Babel };
+      console.log('Libraries loaded:', libs);
+      const missing = Object.entries(libs).filter(([,v]) => !v).map(([k]) => k);
+      if (missing.length > 0) {
+        document.getElementById('root').innerHTML = '<div style="padding:40px;color:red">Failed to load: ' + missing.join(', ') + '. Check browser console.</div>';
+      }
+    });
+  </script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .tab-active { background-color: #43614a; color: white; }
+    .tab-inactive { background-color: #f3f4f6; color: #374151; }
+    .tab-inactive:hover { background-color: #e5e7eb; }
+    .toggle-active { background-color: #43614a; color: white; }
+    .toggle-inactive { background-color: white; color: #374151; border: 1px solid #d1d5db; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const {
+      LineChart, Line, AreaChart, Area, BarChart, Bar,
+      XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+    } = Recharts;
+
+    const { useState, useEffect, useCallback, Fragment } = React;
+
+    // --- Constants ---
+    const COHORT_COLORS = [
+      '#43614a', '#6b9e76', '#a3d4ae', '#2d4a32', '#8bb896',
+      '#5c8a65', '#3a7048', '#7ec48a', '#4f7656', '#96c9a0',
+      '#345c3a', '#78b284', '#569968', '#aadbb5', '#4a8a54',
+      '#618f6a', '#87c492', '#3e6e46', '#72ae7e', '#5a9464',
+    ];
+
+    const TABS = [
+      { id: 'engagement', label: 'Engagement' },
+      { id: 'revenue', label: 'Revenue & GP' },
+      { id: 'cac', label: 'CAC/LTV Payback' },
+      { id: 'advanced', label: 'Advanced' },
+    ];
+
+    // --- API helper ---
+    async function api(url) {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || res.statusText);
+      }
+      return res.json();
+    }
+
+    // --- Tooltip components (matching scheduler admin panel) ---
+    function FocusedTooltip({ active, payload, label, suffix, showSize, cohortSizes, hoveredSeries }) {
+      if (!active || !payload?.length || !hoveredSeries) return null;
+      const item = payload.find(p => p.dataKey === hoveredSeries);
+      if (!item || item.value === undefined || item.value === null) return null;
+      const size = showSize && cohortSizes ? cohortSizes[item.dataKey] : null;
+      return (
+        <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+          <div className="text-gray-500">{label}</div>
+          <div className="mt-1 font-medium" style={{ color: item.color }}>
+            {item.name}: {typeof item.value === 'number' ? item.value.toLocaleString() : item.value}{suffix || ''}
+          </div>
+          {size != null && <div className="mt-0.5 text-gray-500">Cohort size: {size}</div>}
+        </div>
+      );
+    }
+
+    function FocusedTooltipWithTotal({ active, payload, label, hoveredSeries, prefix }) {
+      if (!active || !payload?.length || !hoveredSeries) return null;
+      const item = payload.find(p => p.dataKey === hoveredSeries);
+      if (!item) return null;
+      const total = payload.reduce((sum, p) => sum + (p.value || 0), 0);
+      return (
+        <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs shadow-sm">
+          <div className="text-gray-500">{label}</div>
+          <div className="mt-1 font-medium" style={{ color: item.color }}>
+            {item.name}: {prefix || ''}{typeof item.value === 'number' ? item.value.toLocaleString() : item.value}
+          </div>
+          <div className="mt-0.5 text-gray-500">Total: {prefix || ''}{total.toLocaleString()}</div>
+        </div>
+      );
+    }
+
+    // --- Shared chart components ---
+    function CohortLineChart({ data, cohortKeys, cohortLabels, cohortSizes, yAxisSuffix, title, hoveredSeries, setHoveredSeries, showSize, yDomain }) {
+      return (
+        <section>
+          {title && <h3 className="mb-3 text-sm font-medium text-gray-700">{title}</h3>}
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0} />
+              <YAxis unit={yAxisSuffix || ''} domain={yDomain} />
+              <Tooltip content={<FocusedTooltip suffix={yAxisSuffix} showSize={showSize} cohortSizes={cohortSizes} hoveredSeries={hoveredSeries} />} />
+              <Legend onMouseEnter={(e) => setHoveredSeries(e.dataKey)} onMouseLeave={() => setHoveredSeries(null)} />
+              {cohortKeys.map((key, i) => (
+                <Line key={key} type="monotone" dataKey={key} name={cohortLabels[key] || key}
+                  stroke={COHORT_COLORS[i % COHORT_COLORS.length]}
+                  strokeWidth={hoveredSeries === key ? 3 : hoveredSeries ? 1 : 2}
+                  dot={{ r: 3, strokeWidth: 0, fill: COHORT_COLORS[i % COHORT_COLORS.length] }}
+                  activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff' }}
+                  onMouseEnter={() => setHoveredSeries(key)}
+                  onMouseLeave={() => setHoveredSeries(null)}
+                  connectNulls={false}
+                  style={{ pointerEvents: 'all', cursor: 'pointer' }} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </section>
+      );
+    }
+
+    function CohortAreaChart({ data, cohortKeys, cohortLabels, title, hoveredSeries, setHoveredSeries, prefix }) {
+      return (
+        <section>
+          <h3 className="mb-3 text-sm font-medium text-gray-700">{title}</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={data}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={0} />
+              <YAxis allowDecimals={false} />
+              <Tooltip content={<FocusedTooltipWithTotal hoveredSeries={hoveredSeries} prefix={prefix} />} />
+              <Legend onMouseEnter={(e) => setHoveredSeries(e.dataKey)} onMouseLeave={() => setHoveredSeries(null)} />
+              {cohortKeys.map((key, i) => (
+                <Area key={key} type="linear" dataKey={key} name={cohortLabels[key] || key}
+                  stackId="stack"
+                  fill={COHORT_COLORS[i % COHORT_COLORS.length]}
+                  stroke={COHORT_COLORS[i % COHORT_COLORS.length]}
+                  fillOpacity={hoveredSeries === key ? 0.8 : hoveredSeries ? 0.3 : 0.6}
+                  activeDot={{ r: 4 }}
+                  onMouseEnter={() => setHoveredSeries(key)}
+                  onMouseLeave={() => setHoveredSeries(null)} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </section>
+      );
+    }
+
+    // --- Toggle button ---
+    function Toggle({ options, value, onChange }) {
+      return (
+        <div className="inline-flex rounded-md overflow-hidden border border-gray-300">
+          {options.map(opt => (
+            <button key={opt.value}
+              className={`px-3 py-1.5 text-xs font-medium ${value === opt.value ? 'toggle-active' : 'toggle-inactive'}`}
+              onClick={() => onChange(opt.value)}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // --- Date range picker ---
+    function DateRangePicker({ months, startMonth, endMonth, onStartChange, onEndChange }) {
+      if (!months || months.length === 0) return null;
+      return (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-500">From:</span>
+          <select value={startMonth || ''} onChange={e => onStartChange(e.target.value || null)}
+            className="rounded border border-gray-300 px-2 py-1 text-sm">
+            <option value="">All</option>
+            {months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+          <span className="text-gray-500">To:</span>
+          <select value={endMonth || ''} onChange={e => onEndChange(e.target.value || null)}
+            className="rounded border border-gray-300 px-2 py-1 text-sm">
+            <option value="">All</option>
+            {months.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </div>
+      );
+    }
+
+    // --- Loading spinner ---
+    function Spinner() {
+      return (
+        <div className="flex justify-center py-20">
+          <svg className="h-6 w-6 animate-spin text-gray-400" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        </div>
+      );
+    }
+
+    // --- Error display ---
+    function ErrorMsg({ message }) {
+      return (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {message}
+        </div>
+      );
+    }
+
+    // --- Helper to build offset-indexed line chart data ---
+    function buildOffsetData(cohorts, field, offsetLabel) {
+      if (!cohorts.length) return [];
+      const maxLen = Math.max(...cohorts.map(c => (c[field] || []).length));
+      const data = [];
+      for (let i = 0; i < maxLen; i++) {
+        const point = { label: `${offsetLabel || 'M'}${i}` };
+        cohorts.forEach(c => {
+          const val = c[field]?.[i];
+          if (val !== null && val !== undefined) point[c.month] = val;
+        });
+        data.push(point);
+      }
+      return data;
+    }
+
+    function buildCohortMeta(cohorts) {
+      const keys = cohorts.map(c => c.month);
+      const labels = {};
+      const sizes = {};
+      cohorts.forEach(c => { labels[c.month] = c.label; sizes[c.month] = c.size; });
+      return { keys, labels, sizes };
+    }
+
+    // =====================================================================
+    // TAB 1: Engagement
+    // =====================================================================
+    function EngagementTab({ startMonth, endMonth, period, includeCurrent }) {
+      const [retMode, setRetMode] = useState('standard');
+      const [stdData, setStdData] = useState(null);
+      const [futData, setFutData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [hovered, setHovered] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        setError(null);
+        const base = new URLSearchParams({ period, include_current: includeCurrent });
+        if (startMonth) base.set('start', startMonth);
+        if (endMonth) base.set('end', endMonth);
+        const stdParams = new URLSearchParams(base); stdParams.set('mode', 'standard');
+        const futParams = new URLSearchParams(base); futParams.set('mode', 'future');
+        Promise.all([
+          api(`/api/engagement?${stdParams}`),
+          api(`/api/engagement?${futParams}`),
+        ]).then(([std, fut]) => { setStdData(std); setFutData(fut); })
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!stdData?.cohorts?.length) return <div className="text-gray-500 py-10 text-center">No engagement data available</div>;
+
+      const { keys, labels, sizes } = buildCohortMeta(stdData.cohorts);
+      const offsetPrefix = period === 'week' ? 'W' : 'M';
+      const activeData = retMode === 'future' ? futData : stdData;
+      const retentionData = buildOffsetData(activeData.cohorts, 'retention', offsetPrefix);
+      const cumActionsData = buildOffsetData(stdData.cohorts, 'cumulative_actions', offsetPrefix);
+
+      return (
+        <div className="space-y-8">
+          {/* Retention chart with toggle */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-700">User Retention by Cohort</h3>
+              <div className="flex items-center gap-3">
+                <Toggle options={[
+                  { value: 'standard', label: 'Standard' },
+                  { value: 'future', label: 'Future' },
+                ]} value={retMode} onChange={setRetMode} />
+                <span className="text-xs text-gray-400">
+                  {retMode === 'standard' ? 'Active in that period' : 'Active in any future period'}
+                </span>
+              </div>
+            </div>
+            <CohortLineChart data={retentionData} cohortKeys={keys} cohortLabels={labels}
+              cohortSizes={sizes} yAxisSuffix="%" title=""
+              hoveredSeries={hovered} setHoveredSeries={setHovered} showSize yDomain={[0, 100]} />
+          </div>
+
+          <CohortAreaChart data={stdData.actions_by_month} cohortKeys={keys} cohortLabels={labels}
+            title="Total Actions by Cohort" hoveredSeries={hovered} setHoveredSeries={setHovered} />
+
+          <CohortAreaChart data={stdData.active_by_month} cohortKeys={keys} cohortLabels={labels}
+            title="Active Users by Cohort" hoveredSeries={hovered} setHoveredSeries={setHovered} />
+
+          <CohortLineChart data={cumActionsData} cohortKeys={keys} cohortLabels={labels}
+            cohortSizes={sizes} title="Avg Cumulative Actions per User by Cohort"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} showSize />
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // TAB 2: Revenue & GP
+    // =====================================================================
+    function RevenueTab({ startMonth, endMonth, period, includeCurrent }) {
+      const [basis, setBasis] = useState('accrual');
+      const [retMode, setRetMode] = useState('standard');
+      const [revData, setRevData] = useState(null);
+      const [gpData, setGpData] = useState(null);
+      const [retStd, setRetStd] = useState(null);
+      const [retFut, setRetFut] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [hovered, setHovered] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        setError(null);
+        const base = new URLSearchParams({ basis, period, include_current: includeCurrent });
+        if (startMonth) base.set('start', startMonth);
+        if (endMonth) base.set('end', endMonth);
+        const revParams = new URLSearchParams(base); revParams.set('metric', 'revenue');
+        const gpParams = new URLSearchParams(base); gpParams.set('metric', 'gp');
+        const retStdParams = new URLSearchParams(base); retStdParams.set('type', 'revenue'); retStdParams.set('mode', 'standard');
+        const retFutParams = new URLSearchParams(base); retFutParams.set('type', 'revenue'); retFutParams.set('mode', 'future');
+        Promise.all([
+          api(`/api/revenue?${revParams}`),
+          api(`/api/revenue?${gpParams}`),
+          api(`/api/retention?${retStdParams}`),
+          api(`/api/retention?${retFutParams}`),
+        ]).then(([rev, gp, rStd, rFut]) => { setRevData(rev); setGpData(gp); setRetStd(rStd); setRetFut(rFut); })
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [basis, startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!revData?.cohorts?.length) return <div className="text-gray-500 py-10 text-center">No revenue data available</div>;
+
+      const { keys, labels, sizes } = buildCohortMeta(revData.cohorts);
+      const revLifetime = buildOffsetData(revData.cohorts, 'lifetime_per_user', 'M');
+      const gpLifetime = gpData ? buildOffsetData(gpData.cohorts, 'lifetime_per_user', 'M') : [];
+
+      // Retention: pick standard or future
+      const retSource = retMode === 'future' ? retFut : retStd;
+      const retField = retMode === 'future' ? 'future' : 'standard';
+      const retentionData = retSource?.cohorts ? buildOffsetData(retSource.cohorts, retField, 'M') : [];
+
+      return (
+        <div className="space-y-8">
+          <div className="flex items-center gap-4 flex-wrap">
+            <Toggle options={[
+              { value: 'accrual', label: 'Accrual' },
+              { value: 'cash', label: 'Cash' },
+            ]} value={basis} onChange={setBasis} />
+          </div>
+
+          {/* 1. Monthly Revenue by Cohort */}
+          <CohortAreaChart data={revData.value_by_month} cohortKeys={keys} cohortLabels={labels}
+            title="Monthly Revenue by Cohort"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} prefix="$" />
+
+          {/* 2. Lifetime $ Revenue per Customer */}
+          <CohortLineChart data={revLifetime} cohortKeys={keys} cohortLabels={labels}
+            cohortSizes={sizes} title="Lifetime $ Revenue per Customer by Cohort"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} showSize yAxisSuffix="" />
+
+          {/* 3. Monthly Gross Profit by Cohort */}
+          {gpData?.value_by_month && (
+            <CohortAreaChart data={gpData.value_by_month} cohortKeys={keys} cohortLabels={labels}
+              title="Monthly Gross Profit by Cohort"
+              hoveredSeries={hovered} setHoveredSeries={setHovered} prefix="$" />
+          )}
+
+          {/* 4. Lifetime $ GP per User */}
+          {gpLifetime.length > 0 && (
+            <CohortLineChart data={gpLifetime} cohortKeys={keys} cohortLabels={labels}
+              cohortSizes={sizes} title="Lifetime $ Gross Profit per User by Cohort"
+              hoveredSeries={hovered} setHoveredSeries={setHovered} showSize yAxisSuffix="" />
+          )}
+
+          {/* 5. Monthly Active Customers */}
+          <CohortAreaChart data={revData.customers_by_month} cohortKeys={keys} cohortLabels={labels}
+            title="Monthly Active Customers by Cohort"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} />
+
+          {/* 6. Paying Customers Retained — with Standard/Future toggle */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-gray-700">Paying Customers Retained by Cohort</h3>
+              <div className="flex items-center gap-3">
+                <Toggle options={[
+                  { value: 'standard', label: 'Standard' },
+                  { value: 'future', label: 'Future' },
+                ]} value={retMode} onChange={setRetMode} />
+                <span className="text-xs text-gray-400">
+                  {retMode === 'standard' ? 'Active in that period' : 'Active in any future period'}
+                </span>
+              </div>
+            </div>
+            <CohortLineChart data={retentionData} cohortKeys={keys} cohortLabels={labels}
+              cohortSizes={sizes} yAxisSuffix="%" title=""
+              hoveredSeries={hovered} setHoveredSeries={setHovered} showSize yDomain={[0, 100]} />
+          </div>
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // TAB 3: CAC/LTV Payback
+    // =====================================================================
+    function CACTab({ startMonth, endMonth, period, includeCurrent }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [hovered, setHovered] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        setError(null);
+        const params = new URLSearchParams({ period, include_current: includeCurrent });
+        if (startMonth) params.set('start', startMonth);
+        if (endMonth) params.set('end', endMonth);
+        api(`/api/cac?${params}`)
+          .then(setData)
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!data?.cohorts?.length) return <div className="text-gray-500 py-10 text-center">No CAC data available</div>;
+
+      // Payback table
+      const tableRows = data.cohorts.filter(c => c.sm_spend > 0);
+
+      // Cumulative GP line chart
+      const gpData = buildOffsetData(
+        data.cohorts.filter(c => c.sm_spend > 0),
+        'cumulative_gp', 'M'
+      );
+      const gpKeys = data.cohorts.filter(c => c.sm_spend > 0).map(c => c.month);
+      const gpLabels = {};
+      data.cohorts.forEach(c => { gpLabels[c.month] = c.label; });
+
+      // CAC trend bar chart
+      const cacTrend = data.cohorts
+        .filter(c => c.sm_spend > 0)
+        .map(c => ({ label: c.label, CAC: c.cac, customers: c.customers_added }));
+
+      return (
+        <div className="space-y-8">
+          {/* Payback Table */}
+          <section>
+            <h3 className="mb-3 text-sm font-medium text-gray-700">CAC Payback Summary</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm border border-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Cohort</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Customers</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">S&M Spend</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">CAC</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Payback (mo)</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Time to 2x</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Time to 3x</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(c => (
+                    <tr key={c.month} className="border-t border-gray-100">
+                      <td className="px-3 py-2 text-gray-700">{c.label}</td>
+                      <td className="px-3 py-2 text-right">{c.customers_added}</td>
+                      <td className="px-3 py-2 text-right">${c.sm_spend.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right">${c.cac.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-right">{c.payback_month ?? '—'}</td>
+                      <td className="px-3 py-2 text-right">{c.time_to_2x ?? '—'}</td>
+                      <td className="px-3 py-2 text-right">{c.time_to_3x ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Cumulative GP Lines */}
+          {gpKeys.length > 0 && (
+            <CohortLineChart data={gpData} cohortKeys={gpKeys} cohortLabels={gpLabels}
+              cohortSizes={{}} title="Cumulative Gross Profit by Cohort"
+              hoveredSeries={hovered} setHoveredSeries={setHovered} yAxisSuffix="" />
+          )}
+
+          {/* CAC Trend */}
+          {cacTrend.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">CAC Trend</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={cacTrend}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="CAC" fill="#43614a" />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+
+          {/* Triangle 1: $ Payback per Customer (Cumulative GP/Customer - CAC) */}
+          <section>
+            <h3 className="mb-1 text-sm font-medium text-gray-700">$ Payback per Customer</h3>
+            <p className="mb-3 text-xs text-gray-400">Cumulative GP per customer minus CAC. Negative = still paying back. Positive = profitable.</p>
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="text-xs whitespace-nowrap">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 sticky left-0 bg-gray-50 z-10 border-r border-gray-200">Cohort</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">Size</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">S&M</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">CAC</th>
+                    {Array.from({ length: data.max_offsets + 1 }, (_, i) => (
+                      <th key={i} className="px-2 py-1.5 text-center font-medium text-gray-600">{i + 1}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(c => (
+                    <tr key={c.month} className="border-t border-gray-100">
+                      <td className="px-2 py-1.5 font-medium text-gray-700 sticky left-0 bg-white z-10 border-r border-gray-200">{c.label} ({c.customers_added})</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">{c.customers_added}</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">${c.sm_spend.toLocaleString()}</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">${Math.round(c.cac).toLocaleString()}</td>
+                      {Array.from({ length: data.max_offsets + 1 }, (_, i) => {
+                        const val = c.gp_per_cust_net_cac?.[i];
+                        if (val === null || val === undefined) return <td key={i} className="px-2 py-1.5 text-center text-gray-300">—</td>;
+                        const isPositive = val >= 0;
+                        const bg = isPositive
+                          ? (val >= c.cac * 2 ? 'bg-green-200' : val >= c.cac ? 'bg-green-100' : 'bg-green-50')
+                          : (val < -c.cac * 0.5 ? 'bg-red-100' : 'bg-red-50');
+                        return (
+                          <td key={i} className={`px-2 py-1.5 text-center ${bg}`}>
+                            {isPositive ? '' : ''}${Math.round(val).toLocaleString()}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Triangle 2: GP / CAC Ratio */}
+          <section>
+            <h3 className="mb-1 text-sm font-medium text-gray-700">Gross Profit → CAC Ratio</h3>
+            <p className="mb-3 text-xs text-gray-400">Cumulative GP / total S&M spend. 1.0x = break even. 2.0x = doubled your money.</p>
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="text-xs whitespace-nowrap">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 sticky left-0 bg-gray-50 z-10 border-r border-gray-200">Cohort</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">S&M</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">CAC</th>
+                    {Array.from({ length: data.max_offsets + 1 }, (_, i) => (
+                      <th key={i} className="px-2 py-1.5 text-center font-medium text-gray-600">{i + 1}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableRows.map(c => (
+                    <tr key={c.month} className="border-t border-gray-100">
+                      <td className="px-2 py-1.5 font-medium text-gray-700 sticky left-0 bg-white z-10 border-r border-gray-200">{c.label} ({c.customers_added})</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">${c.sm_spend.toLocaleString()}</td>
+                      <td className="px-2 py-1.5 text-right text-gray-500">${Math.round(c.cac).toLocaleString()}</td>
+                      {Array.from({ length: data.max_offsets + 1 }, (_, i) => {
+                        const val = c.gp_cac_ratio?.[i];
+                        if (val === null || val === undefined) return <td key={i} className="px-2 py-1.5 text-center text-gray-300">—</td>;
+                        let bg = 'bg-red-50';
+                        if (val >= 3) bg = 'bg-green-600 text-white';
+                        else if (val >= 2) bg = 'bg-green-400';
+                        else if (val >= 1) bg = 'bg-green-200';
+                        else if (val >= 0.5) bg = 'bg-yellow-50';
+                        return (
+                          <td key={i} className={`px-2 py-1.5 text-center ${bg}`}>
+                            {val.toFixed(2)}x
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // TAB 4: Advanced
+    // =====================================================================
+    function AdvancedTab({ startMonth, endMonth, period, includeCurrent }) {
+      const [section, setSection] = useState('layer-cake');
+      const [hovered, setHovered] = useState(null);
+
+      const sections = [
+        { id: 'layer-cake', label: 'GP → CAC Layer Cake' },
+        { id: 'dollar-retention', label: 'Dollar Retention / NRR' },
+        { id: 'customers', label: 'Customer Concentration' },
+        { id: 'active-over-time', label: 'Active Customers Over Time' },
+      ];
+
+      return (
+        <div className="space-y-6">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            These advanced views may not be accurate for your specific data. Please double-check that column mappings, date parsing, and calculations are correct before relying on these numbers.
+          </div>
+
+          <div className="flex gap-2 flex-wrap">
+            {sections.map(s => (
+              <button key={s.id}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md ${section === s.id ? 'toggle-active' : 'toggle-inactive'}`}
+                onClick={() => setSection(s.id)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          {section === 'layer-cake' && <LayerCakeSection startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} hovered={hovered} setHovered={setHovered} />}
+          {section === 'dollar-retention' && <DollarRetentionSection startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} hovered={hovered} setHovered={setHovered} />}
+          {section === 'customers' && <CustomerSection startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} />}
+          {section === 'active-over-time' && <ActiveOverTimeSection startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} hovered={hovered} setHovered={setHovered} />}
+        </div>
+      );
+    }
+
+    function LayerCakeSection({ startMonth, endMonth, period, includeCurrent, hovered, setHovered }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams({ period, include_current: includeCurrent });
+        if (startMonth) params.set('start', startMonth);
+        if (endMonth) params.set('end', endMonth);
+        api(`/api/layer-cake?${params}`)
+          .then(setData)
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!data?.cohorts?.length) return <div className="text-gray-500 py-10 text-center">No data</div>;
+
+      // Build cumulative GP line data
+      const cohorts = data.cohorts.filter(c => c.sm_spend > 0);
+      const keys = cohorts.map(c => c.month);
+      const labels = {};
+      cohorts.forEach(c => { labels[c.month] = c.label; });
+
+      const gpData = [];
+      const maxOffset = data.max_offsets || 0;
+      for (let i = 0; i <= maxOffset; i++) {
+        const point = { label: `M${i}` };
+        cohorts.forEach(c => {
+          const d = c.gp_by_offset?.[i];
+          if (d && d.ratio !== null) point[c.month] = d.ratio;
+        });
+        gpData.push(point);
+      }
+
+      return (
+        <div className="space-y-8">
+          <CohortLineChart data={gpData} cohortKeys={keys} cohortLabels={labels}
+            cohortSizes={{}} title="Cumulative GP / CAC Ratio by Cohort"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} yAxisSuffix="x" />
+
+          <section>
+            <h3 className="mb-3 text-sm font-medium text-gray-700">Payback Progression</h3>
+            <div className="overflow-x-auto">
+              <table className="text-xs border border-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium text-gray-600 sticky left-0 bg-gray-50">Cohort</th>
+                    <th className="px-2 py-1.5 text-right font-medium text-gray-600">S&M</th>
+                    {Array.from({ length: Math.min(maxOffset + 1, 18) }, (_, i) => (
+                      <th key={i} className="px-2 py-1.5 text-center font-medium text-gray-600">M{i}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cohorts.map(c => (
+                    <tr key={c.month} className="border-t border-gray-100">
+                      <td className="px-2 py-1.5 text-gray-700 sticky left-0 bg-white">{c.label}</td>
+                      <td className="px-2 py-1.5 text-right">${c.sm_spend.toLocaleString()}</td>
+                      {Array.from({ length: Math.min(maxOffset + 1, 18) }, (_, i) => {
+                        const d = c.gp_by_offset?.[i];
+                        const ratio = d?.ratio;
+                        let bg = '';
+                        if (ratio !== null && ratio !== undefined) {
+                          if (ratio >= 3) bg = 'bg-green-600 text-white';
+                          else if (ratio >= 2) bg = 'bg-green-400';
+                          else if (ratio >= 1) bg = 'bg-green-200';
+                          else bg = 'bg-red-50';
+                        }
+                        return (
+                          <td key={i} className={`px-2 py-1.5 text-center ${bg}`}>
+                            {ratio !== null && ratio !== undefined ? `${ratio}x` : '—'}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function DollarRetentionSection({ startMonth, endMonth, period, includeCurrent, hovered, setHovered }) {
+      const [basis, setBasis] = useState('accrual');
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams({ basis, period, include_current: includeCurrent });
+        if (startMonth) params.set('start', startMonth);
+        if (endMonth) params.set('end', endMonth);
+        api(`/api/dollar-retention?${params}`)
+          .then(setData)
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [basis, startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!data?.cohorts?.length) return <div className="text-gray-500 py-10 text-center">No data</div>;
+
+      const { keys, labels } = buildCohortMeta(data.cohorts);
+      const sizes = {};
+      data.cohorts.forEach(c => { sizes[c.month] = `$${c.initial_revenue.toLocaleString()}`; });
+      const nrrData = buildOffsetData(data.cohorts, 'nrr', 'M');
+
+      return (
+        <div className="space-y-8">
+          <Toggle options={[
+            { value: 'accrual', label: 'Accrual' },
+            { value: 'cash', label: 'Cash' },
+          ]} value={basis} onChange={setBasis} />
+
+          <CohortLineChart data={nrrData} cohortKeys={keys} cohortLabels={labels}
+            cohortSizes={sizes} yAxisSuffix="%" title="Net Revenue Retention by Cohort (100% = no churn)"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} showSize />
+
+          <CohortAreaChart data={data.revenue_by_month} cohortKeys={keys} cohortLabels={labels}
+            title="Revenue by Cohort (Calendar View)"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} prefix="$" />
+        </div>
+      );
+    }
+
+    function CustomerSection({ startMonth, endMonth, period, includeCurrent }) {
+      const [dataType, setDataType] = useState('revenue');
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams({ type: dataType, period, include_current: includeCurrent });
+        if (startMonth) params.set('start', startMonth);
+        if (endMonth) params.set('end', endMonth);
+        api(`/api/customers?${params}`)
+          .then(setData)
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [dataType, startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!data) return null;
+
+      return (
+        <div className="space-y-8">
+          <Toggle options={[
+            { value: 'revenue', label: 'Revenue' },
+            { value: 'engagement', label: 'Engagement' },
+          ]} value={dataType} onChange={setDataType} />
+
+          {/* Pareto chart */}
+          {data.pareto?.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">
+                Customer Concentration (Pareto) — {data.total_customers?.toLocaleString()} customers
+              </h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={data.pareto}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="pct_customers" unit="%" tick={{ fontSize: 11 }} label={{ value: '% of Customers', position: 'insideBottom', offset: -5 }} />
+                  <YAxis unit="%" domain={[0, 100]} label={{ value: '% of Value', angle: -90, position: 'insideLeft' }} />
+                  <Tooltip formatter={(v) => `${v}%`} />
+                  <Line type="monotone" dataKey="pct_value" stroke="#43614a" strokeWidth={2} dot={false} />
+                  {/* Reference line at 80/20 */}
+                  <Line type="monotone" dataKey={() => 80} stroke="#d1d5db" strokeDasharray="5 5" dot={false} name="80% line" />
+                </LineChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+
+          {/* Histogram */}
+          {data.histogram?.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">Customer Value Distribution</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.histogram}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="bin_start" tick={{ fontSize: 10 }}
+                    tickFormatter={v => dataType === 'revenue' ? `$${Math.round(v)}` : Math.round(v)} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip labelFormatter={v => dataType === 'revenue' ? `$${Math.round(v)}` : Math.round(v)} />
+                  <Bar dataKey="count" fill="#6b9e76" />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+
+          {/* Top 100 table */}
+          {data.top_customers?.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">Top 100 Customers</h3>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="min-w-full text-xs border border-gray-200">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-medium text-gray-600">#</th>
+                      <th className="px-2 py-1.5 text-left font-medium text-gray-600">Customer</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-600">Total Value</th>
+                      <th className="px-2 py-1.5 text-left font-medium text-gray-600">Cohort</th>
+                      <th className="px-2 py-1.5 text-right font-medium text-gray-600">Months Active</th>
+                      {data.top_customers[0]?.plan !== undefined && (
+                        <th className="px-2 py-1.5 text-left font-medium text-gray-600">Plan</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.top_customers.map((c, i) => (
+                      <tr key={c.customer_id} className="border-t border-gray-100">
+                        <td className="px-2 py-1.5 text-gray-400">{i + 1}</td>
+                        <td className="px-2 py-1.5 text-gray-700 font-mono">{c.customer_id?.substring(0, 12)}...</td>
+                        <td className="px-2 py-1.5 text-right">{dataType === 'revenue' ? `$${c.total_value.toLocaleString()}` : c.total_value.toLocaleString()}</td>
+                        <td className="px-2 py-1.5 text-gray-600">{c.cohort_label}</td>
+                        <td className="px-2 py-1.5 text-right">{c.months_active}</td>
+                        {c.plan !== undefined && <td className="px-2 py-1.5 text-gray-600">{c.plan || '—'}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </div>
+      );
+    }
+
+    function ActiveOverTimeSection({ startMonth, endMonth, period, includeCurrent, hovered, setHovered }) {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+
+      useEffect(() => {
+        setLoading(true);
+        const params = new URLSearchParams({ period, include_current: includeCurrent });
+        if (startMonth) params.set('start', startMonth);
+        if (endMonth) params.set('end', endMonth);
+        api(`/api/active-customers?${params}`)
+          .then(setData)
+          .catch(e => setError(e.message))
+          .finally(() => setLoading(false));
+      }, [startMonth, endMonth, period, includeCurrent]);
+
+      if (loading) return <Spinner />;
+      if (error) return <ErrorMsg message={error} />;
+      if (!data?.active_stacked?.length) return <div className="text-gray-500 py-10 text-center">No data</div>;
+
+      const cohortKeys = data.cohort_months || [];
+      const labels = {};
+      cohortKeys.forEach(k => {
+        const d = new Date(k);
+        labels[k] = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+      });
+
+      return (
+        <div className="space-y-8">
+          <CohortAreaChart data={data.active_stacked} cohortKeys={cohortKeys} cohortLabels={labels}
+            title="Active Customers by Cohort Over Time"
+            hoveredSeries={hovered} setHoveredSeries={setHovered} />
+
+          {/* New vs Returning */}
+          {data.new_vs_returning?.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">New vs Returning Customers</h3>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={data.new_vs_returning}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="new" name="New" stackId="a" fill="#43614a" />
+                  <Bar dataKey="returning" name="Returning" stackId="a" fill="#a3d4ae" />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+
+          {/* Months purchased histogram */}
+          {data.months_purchased_histogram?.length > 0 && (
+            <section>
+              <h3 className="mb-3 text-sm font-medium text-gray-700">Distribution: # Months Active per Customer</h3>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.months_purchased_histogram}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="months" tick={{ fontSize: 11 }} label={{ value: 'Months', position: 'insideBottom', offset: -5 }} />
+                  <YAxis allowDecimals={false} label={{ value: 'Customers', angle: -90, position: 'insideLeft' }} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#6b9e76" />
+                </BarChart>
+              </ResponsiveContainer>
+            </section>
+          )}
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // App
+    // =====================================================================
+    function App() {
+      const [tab, setTab] = useState('engagement');
+      const [startMonth, setStartMonth] = useState(null);
+      const [endMonth, setEndMonth] = useState(null);
+      const [period, setPeriod] = useState('month');
+      const [includeCurrent, setIncludeCurrent] = useState(true);
+      const [config, setConfig] = useState(null);
+      const [availableMonths, setAvailableMonths] = useState([]);
+      const [profiles, setProfiles] = useState([]);
+      const [currentProfile, setCurrentProfile] = useState('default');
+      const [switchingProfile, setSwitchingProfile] = useState(false);
+
+      const loadProfileData = useCallback((profileName) => {
+        api('/api/config').then(c => {
+          setConfig(c);
+          if (c?.period === 'week') setPeriod('week');
+          else setPeriod('month');
+          // Get month range from engagement or revenue data
+          api('/api/engagement?mode=standard').then(d => {
+            if (d?.cohorts?.length) {
+              setAvailableMonths(d.cohorts.map(c => ({ key: c.month, label: c.label })));
+            } else { setAvailableMonths([]); }
+          }).catch(() => {
+            api('/api/revenue?basis=accrual&metric=revenue').then(d => {
+              if (d?.cohorts?.length) {
+                setAvailableMonths(d.cohorts.map(c => ({ key: c.month, label: c.label })));
+              } else { setAvailableMonths([]); }
+            }).catch(() => setAvailableMonths([]));
+          });
+        }).catch(() => {});
+      }, []);
+
+      const switchProfile = useCallback((profileName) => {
+        setSwitchingProfile(true);
+        setStartMonth(null);
+        setEndMonth(null);
+        fetch(`/api/reload?profile=${encodeURIComponent(profileName)}`, { method: 'POST' })
+          .then(r => r.json())
+          .then(d => {
+            setCurrentProfile(d.profile);
+            loadProfileData(d.profile);
+          })
+          .finally(() => setSwitchingProfile(false));
+      }, [loadProfileData]);
+
+      useEffect(() => {
+        // Load profiles list and initial data
+        api('/api/profiles').then(d => {
+          setProfiles(d.profiles || []);
+          setCurrentProfile(d.current || 'default');
+        }).catch(() => {});
+        loadProfileData('default');
+      }, [loadProfileData]);
+
+      const hasData = config && Object.keys(config).length > 0;
+
+      return (
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          {/* Header */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between">
+              <h1 className="text-2xl font-bold text-gray-900">Cohort Analysis</h1>
+              {profiles.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-500">Profile:</span>
+                  <select value={currentProfile}
+                    onChange={e => switchProfile(e.target.value)}
+                    disabled={switchingProfile}
+                    className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium capitalize">
+                    {profiles.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  {switchingProfile && <Spinner />}
+                </div>
+              )}
+            </div>
+            {!hasData && (
+              <div className="mt-4 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                No data configured. Run <code className="bg-yellow-100 px-1 rounded">/cohort-analysis</code> in Claude Code to set up your data, or create <code className="bg-yellow-100 px-1 rounded">data/config.json</code> manually.
+              </div>
+            )}
+          </div>
+
+          {/* Global controls */}
+          <div className="mb-6 flex items-center justify-between flex-wrap gap-4">
+            {/* Tabs */}
+            <div className="flex gap-1 flex-wrap">
+              {TABS.map(t => (
+                <button key={t.id}
+                  className={`px-4 py-2 text-sm font-medium rounded-md ${tab === t.id ? 'tab-active' : 'tab-inactive'}`}
+                  onClick={() => setTab(t.id)}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Date range + include current */}
+            <div className="flex items-center gap-4 flex-wrap">
+              <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={includeCurrent}
+                  onChange={e => setIncludeCurrent(e.target.checked)}
+                  className="rounded border-gray-300" />
+                Include latest {period === 'week' ? 'week' : 'month'}
+              </label>
+
+              <DateRangePicker months={availableMonths}
+                startMonth={startMonth} endMonth={endMonth}
+                onStartChange={setStartMonth} onEndChange={setEndMonth} />
+            </div>
+          </div>
+
+          {/* Tab content */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            {tab === 'engagement' && <EngagementTab startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} />}
+            {tab === 'revenue' && <RevenueTab startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} />}
+            {tab === 'cac' && <CACTab startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} />}
+            {tab === 'advanced' && <AdvancedTab startMonth={startMonth} endMonth={endMonth} period={period} includeCurrent={includeCurrent} />}
+          </div>
+
+          {/* Footer */}
+          <div className="mt-8 pb-4 text-center text-xs text-gray-400">
+            Built by <a href="https://ferganalabs.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-gray-700 underline">Fergana Labs</a>
+          </div>
+        </div>
+      );
+    }
+
+    // --- Mount ---
+    // React 18 UMD: createRoot is on ReactDOM directly
+    const root = (ReactDOM.createRoot || ReactDOM.createRoot)
+      ? ReactDOM.createRoot(document.getElementById('root'))
+      : null;
+    if (root) {
+      root.render(<App />);
+    } else {
+      ReactDOM.render(<App />, document.getElementById('root'));
+    }
+  </script>
+</body>
+</html>
