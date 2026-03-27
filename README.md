@@ -6,15 +6,17 @@ Built by [Fergana Labs](https://ferganalabs.com).
 
 ## Install
 
-Add the Fergana Labs marketplace and install the plugin:
-
+**Step 1:** Add the Fergana Labs marketplace:
 ```
 /plugin marketplace add Fergana-Labs/fergana-plugins
+```
+
+**Step 2:** Install the plugin:
+```
 /plugin install cohort-analysis@fergana-labs
 ```
 
-Then run the skill:
-
+**Step 3:** Restart Claude Code, then run the skill:
 ```
 /cohort-analysis
 ```
