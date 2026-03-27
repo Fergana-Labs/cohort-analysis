@@ -1,12 +1,30 @@
-# Cohort Analysis Tool
+# Cohort Analysis
 
-A standalone, locally runnable cohort analysis dashboard. Point it at a CSV, Excel file, or PostgreSQL database and get interactive cohort charts — engagement retention, revenue/GP cohorts, CAC/LTV payback, and more.
+A Claude Code plugin that generates interactive cohort analysis dashboards. Point it at a CSV, Excel file, or PostgreSQL database and get live charts — engagement retention, revenue/GP cohorts, CAC/LTV payback, and more.
 
-Built to be used with [Claude Code](https://claude.ai/code) via the `/cohort-analysis` skill, or run directly.
+Built by [Fergana Labs](https://ferganalabs.com).
 
-## Quick Start
+## Install
+
+```
+/install-plugin https://github.com/Fergana-Labs/cohort-analysis
+```
+
+Then run the skill:
+
+```
+/cohort-analysis:cohort-analysis
+```
+
+Claude Code will walk you through connecting your data and launch the dashboard.
+
+## Quick Start (without plugin)
+
+If you prefer to clone and run directly:
 
 ```bash
+git clone https://github.com/Fergana-Labs/cohort-analysis.git
+cd cohort-analysis
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -16,20 +34,20 @@ python app/server.py
 
 ## Using with Claude Code
 
-Paste one of these prompts into Claude Code:
+After installing the plugin, paste one of these prompts:
 
 **For CSV/Excel files:**
 ```
-I have a cohort analysis tool in this directory. I want to analyze my data.
+I want to analyze my cohort data.
 Here's my data file: [filename.csv or filename.xlsx].
-Please run /cohort-analysis to set it up and launch the dashboard.
+Please run /cohort-analysis:cohort-analysis to set it up and launch the dashboard.
 ```
 
 **For a PostgreSQL database:**
 ```
-I have a cohort analysis tool in this directory. I want to analyze my data.
+I want to analyze my cohort data.
 My database connection string is: postgresql://user:pass@host:port/dbname
-Please run /cohort-analysis to explore my schema, set it up, and launch the dashboard.
+Please run /cohort-analysis:cohort-analysis to explore my schema, set it up, and launch the dashboard.
 ```
 
 Claude Code will:
@@ -37,7 +55,11 @@ Claude Code will:
 2. Ask you to confirm column mappings (customer ID, dates, revenue, etc.)
 3. Ask about accrual vs cash revenue recognition if relevant
 4. Calculate cohort dates from each customer's first appearance (default)
-5. Generate the config, install dependencies, and launch the dashboard
+5. Generate the config, install dependencies, and launch the dashboard at http://localhost:8000
+
+## Multiple Analyses
+
+You can run analyses for different companies or products side by side. Each time you run the skill, it asks for a profile name. Switch between profiles using the dropdown in the dashboard header.
 
 ## Data Requirements
 
@@ -54,7 +76,7 @@ Claude Code will:
 - Marketing spend can be in a separate sheet/file or provided as a simple monthly table
 
 ### Cohort Date
-If your data doesn't have an explicit cohort date column, the tool calculates it automatically as each customer's **first appearance date**, floored to the start of the month. This is the most common approach — a customer's cohort is the month they first showed up.
+If your data doesn't have an explicit cohort date column, the tool calculates it automatically as each customer's **first appearance date**, floored to the start of the month.
 
 ## Supported Data Sources
 - **CSV** files (`.csv`)
@@ -65,12 +87,19 @@ If your data doesn't have an explicit cohort date column, the tool calculates it
 
 ### Core
 1. **Engagement** — User retention, total actions, active users, avg cumulative actions per user (all by cohort)
-2. **Revenue & GP** — Monthly revenue/GP layer cakes, lifetime $/customer, active paying customers, paying customer retention
-3. **CAC/LTV Payback** — CAC per cohort, cumulative GP vs spend, payback period, time to 2x/3x
-4. **Retention** — Toggle between "active in that period" vs "active in any future period" counting
+2. **Revenue & GP** — Monthly revenue/GP layer cakes, lifetime $/customer, GP/user, active paying customers, paying customer retention
+3. **CAC/LTV Payback** — CAC per cohort, cumulative GP vs spend, payback triangles, time to 2x/3x
 
 ### Advanced
 - GP → CAC layer cake (cumulative payback progression)
 - Dollar retention / net revenue retention (NRR)
 - Customer concentration (Pareto / top 100)
 - Unique active customers over time (new vs returning)
+
+## Retention Modes
+
+Both engagement and revenue retention charts support two counting methods:
+- **Standard** — was the user active in that specific period?
+- **Future** — was the user active in that period or any later period?
+
+Toggle between them directly on the retention charts.
