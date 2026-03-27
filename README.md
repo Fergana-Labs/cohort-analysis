@@ -4,7 +4,7 @@ A Claude Code plugin that generates interactive cohort analysis dashboards. Poin
 
 Built by [Fergana Labs](https://ferganalabs.com).
 
-Note: Runs locally on your computer. Requirements are Python and Claude Code (preferred but other coding agent like Codex or Cursor can work as well).
+Note: Runs locally on your computer using Claude Code and Python. Claude Code is preferred, but another coding agent like Codex or Cursor can work as well.
 
 ## Install
 
