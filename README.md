@@ -6,14 +6,17 @@ Built by [Fergana Labs](https://ferganalabs.com).
 
 ## Install
 
+Add the Fergana Labs marketplace and install the plugin:
+
 ```
-/install-plugin https://github.com/Fergana-Labs/cohort-analysis
+/plugin marketplace add Fergana-Labs/fergana-plugins
+/plugin install cohort-analysis@fergana-labs
 ```
 
 Then run the skill:
 
 ```
-/cohort-analysis:cohort-analysis
+/cohort-analysis
 ```
 
 Claude Code will walk you through connecting your data and launch the dashboard.
@@ -40,14 +43,14 @@ After installing the plugin, paste one of these prompts:
 ```
 I want to analyze my cohort data.
 Here's my data file: [filename.csv or filename.xlsx].
-Please run /cohort-analysis:cohort-analysis to set it up and launch the dashboard.
+Please run /cohort-analysis to set it up and launch the dashboard.
 ```
 
 **For a PostgreSQL database:**
 ```
 I want to analyze my cohort data.
 My database connection string is: postgresql://user:pass@host:port/dbname
-Please run /cohort-analysis:cohort-analysis to explore my schema, set it up, and launch the dashboard.
+Please run /cohort-analysis to explore my schema, set it up, and launch the dashboard.
 ```
 
 Claude Code will:
